@@ -22,6 +22,9 @@ async function initAdmin() {
             googleApiKeyInput.value = googleApiKey;
         }
         
+        // Load threshold settings
+        await loadThresholds();
+        
         const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.8/model/';
         await Promise.all([
             faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
@@ -263,7 +266,12 @@ async function registerPerson() {
 
         await addPerson(person);
 
-        showMessage('registerStatus', `✅ ${name} registered with ${capturedImages.length} image(s)!`, 'success');
+        showMessage('registerStatus', `✅ ${name} registered with ${capturedImages.length} image(s)! Generating greeting...`, 'success');
+        
+        // Generate TTS greeting in background (async, don't wait)
+        generateTTSGreeting(person.id, name).catch(err => {
+            console.error('Failed to generate TTS:', err);
+        });
         
         // Reset form
         personNameInput.value = '';
@@ -274,6 +282,109 @@ async function registerPerson() {
     } catch (error) {
         console.error('Register error:', error);
         showMessage('registerStatus', 'Error registering person: ' + error.message, 'error');
+    }
+}
+
+async function generateTTSGreeting(personId, name) {
+    try {
+        const googleApiKey = await getSetting('googleApiKey');
+        if (!googleApiKey) {
+            console.log('TTS: Google API key not configured');
+            return;
+        }
+
+        const text = `Xin chào bạn ${name}`;
+        
+        const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleApiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                input: { text },
+                voice: {
+                    languageCode: 'vi-VN',
+                    name: 'vi-VN-Wavenet-A'
+                },
+                audioConfig: { 
+                    audioEncoding: 'MP3', 
+                    pitch: 0,
+                    speakingRate: 1.0
+                }
+            })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            // Store TTS in person record
+            const person = await getPerson(personId);
+            if (person) {
+                person.ttsGreeting = data.audioContent;
+                await addPerson(person); // Update with TTS
+                console.log(`✅ TTS generated for: ${name}`);
+            }
+        }
+    } catch (error) {
+        console.error('TTS generation error:', error);
+    }
+}
+
+async function previewGreeting(personId, name) {
+    try {
+        const person = await getPerson(personId);
+        
+        if (person && person.ttsGreeting) {
+            // Play cached TTS
+            const audio = new Audio(`data:audio/mp3;base64,${person.ttsGreeting}`);
+            audio.play();
+        } else {
+            // Generate TTS if not cached
+            showMessage('registerStatus', '🔊 Generating greeting...', 'info');
+            
+            const googleApiKey = await getSetting('googleApiKey');
+            if (!googleApiKey) {
+                showMessage('registerStatus', '❌ Google API key not configured', 'error');
+                return;
+            }
+
+            const text = `Xin chào bạn ${name}`;
+            
+            const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleApiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    input: { text },
+                    voice: {
+                        languageCode: 'vi-VN',
+                        name: 'vi-VN-Wavenet-A'
+                    },
+                    audioConfig: { 
+                        audioEncoding: 'MP3', 
+                        pitch: 0,
+                        speakingRate: 1.0
+                    }
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                
+                // Cache it
+                if (person) {
+                    person.ttsGreeting = data.audioContent;
+                    await addPerson(person);
+                }
+                
+                // Play it
+                const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+                audio.play();
+                
+                showMessage('registerStatus', '🔊 Playing greeting...', 'success');
+            } else {
+                showMessage('registerStatus', '❌ Failed to generate greeting', 'error');
+            }
+        }
+    } catch (error) {
+        console.error('Preview error:', error);
+        showMessage('registerStatus', '❌ Error: ' + error.message, 'error');
     }
 }
 
@@ -317,7 +428,8 @@ async function loadPeopleList() {
                     <p>🖼️ ${imageCount} image${imageCount > 1 ? 's' : ''}</p>
                 </div>
                 <div class="person-actions">
-                    <button class="btn btn-danger" onclick="handleDeletePerson('${person.id}')" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;">🗑️</button>
+                    <button class="btn btn-secondary" onclick="previewGreeting('${person.id}', '${person.name}')" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;" title="Preview greeting">🔊</button>
+                    <button class="btn btn-danger" onclick="handleDeletePerson('${person.id}')" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;" title="Delete">🗑️</button>
                 </div>
             `;
             peopleListEl.appendChild(card);
@@ -329,19 +441,59 @@ async function loadPeopleList() {
 }
 
 async function saveApiKey() {
-    try {
-        const key = googleApiKeyInput.value.trim();
-        
-        if (!key) {
-            showMessage('settingsStatus', 'Please enter an API key', 'error');
-            return;
-        }
+    const apiKey = document.getElementById('googleApiKey').value;
+    
+    if (!apiKey) {
+        showStatus('settingsStatus', 'Please enter an API key', 'error');
+        return;
+    }
 
-        await setSetting('googleApiKey', key);
-        showMessage('settingsStatus', '✅ API Key saved successfully!', 'success');
+    try {
+        await setSetting('googleApiKey', apiKey);
+        showStatus('settingsStatus', '✅ API key saved successfully!', 'success');
     } catch (error) {
-        console.error('Save error:', error);
-        showMessage('settingsStatus', 'Error saving API key: ' + error.message, 'error');
+        showStatus('settingsStatus', '❌ Failed to save API key', 'error');
+        console.error('Save API key error:', error);
+    }
+}
+
+function updateThresholdDisplay() {
+    const distanceValue = document.getElementById('distanceThreshold').value;
+    const confidenceValue = document.getElementById('confidenceThreshold').value;
+    
+    document.getElementById('distanceValue').textContent = distanceValue;
+    document.getElementById('confidenceValue').textContent = confidenceValue + '%';
+}
+
+async function saveThresholds() {
+    const distanceThreshold = parseFloat(document.getElementById('distanceThreshold').value);
+    const confidenceThreshold = parseInt(document.getElementById('confidenceThreshold').value);
+    
+    try {
+        await setSetting('distanceThreshold', distanceThreshold);
+        await setSetting('confidenceThreshold', confidenceThreshold);
+        showStatus('settingsStatus', '✅ Thresholds saved successfully! Reload recognition page to apply.', 'success');
+    } catch (error) {
+        showStatus('settingsStatus', '❌ Failed to save thresholds', 'error');
+        console.error('Save thresholds error:', error);
+    }
+}
+
+async function loadThresholds() {
+    try {
+        const distanceThreshold = await getSetting('distanceThreshold');
+        const confidenceThreshold = await getSetting('confidenceThreshold');
+        
+        if (distanceThreshold !== undefined) {
+            document.getElementById('distanceThreshold').value = distanceThreshold;
+        }
+        if (confidenceThreshold !== undefined) {
+            document.getElementById('confidenceThreshold').value = confidenceThreshold;
+        }
+        
+        updateThresholdDisplay();
+    } catch (error) {
+        console.error('Load thresholds error:', error);
     }
 }
 

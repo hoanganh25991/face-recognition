@@ -9,14 +9,17 @@ const faceLinesSvg = document.getElementById('faceLines');
 let people = [];
 let recognizedFaces = new Map();
 let lastSpokenFaces = new Map();
+let lastSeenInFrame = new Map(); // Track when each person was last detected in frame
 let isAppStarted = false;
 let ttsEnabled = false;
 let ttsQueue = [];
 let isProcessingTTS = false;
 
-const CONFIDENCE_THRESHOLD = 0.50;
-const DISTANCE_THRESHOLD = 0.6;
+// Thresholds - loaded from settings on startup
+let CONFIDENCE_THRESHOLD = 0.50;
+let DISTANCE_THRESHOLD = 0.6;
 const SPEAK_COOLDOWN = 15000; // 15 seconds cooldown
+const OUT_OF_FRAME_THRESHOLD = 2000; // 2 seconds - reset greeting if person was gone this long
 
 async function startApp() {
     try {
@@ -35,6 +38,20 @@ async function startApp() {
         ]);
 
         await initDB();
+        
+        // Load threshold settings from database
+        const savedDistanceThreshold = await getSetting('distanceThreshold');
+        const savedConfidenceThreshold = await getSetting('confidenceThreshold');
+        
+        if (savedDistanceThreshold !== undefined) {
+            DISTANCE_THRESHOLD = savedDistanceThreshold;
+            console.log(`📏 Distance Threshold: ${DISTANCE_THRESHOLD}`);
+        }
+        if (savedConfidenceThreshold !== undefined) {
+            CONFIDENCE_THRESHOLD = savedConfidenceThreshold / 100; // Convert percentage to decimal
+            console.log(`✅ Confidence Threshold: ${Math.round(CONFIDENCE_THRESHOLD * 100)}%`);
+        }
+        
         people = await getAllPeople();
         
         console.log(`Loaded ${people.length} people for recognition`);
@@ -339,7 +356,18 @@ async function speakRecognition(person, confidence) {
     if (!ttsEnabled) return;
 
     const now = Date.now();
+    const lastSeen = lastSeenInFrame.get(person.id) || 0;
     const lastSpoken = lastSpokenFaces.get(person.id) || 0;
+    
+    // Check if person was out of frame for more than OUT_OF_FRAME_THRESHOLD
+    // If so, reset their greeting cooldown (they're "new" again)
+    if (now - lastSeen > OUT_OF_FRAME_THRESHOLD) {
+        console.log(`👋 ${person.name} returned to frame after being away`);
+        lastSpokenFaces.delete(person.id); // Reset cooldown
+    }
+    
+    // Update last seen time for this person
+    lastSeenInFrame.set(person.id, now);
 
     // Check if we've recently greeted this person (within cooldown period)
     if (now - lastSpoken < SPEAK_COOLDOWN) {
@@ -379,38 +407,20 @@ async function processTTSQueue() {
     const item = ttsQueue.shift();
 
     try {
-        const googleApiKey = await getSetting('googleApiKey');
-        if (!googleApiKey) {
-            console.warn('Google API key not configured');
-            isProcessingTTS = false;
+        // Load person from database to check for cached TTS
+        const person = await getPerson(item.personId);
+        
+        if (!person) {
+            console.warn(`Person ${item.personId} not found in database`);
+            setTimeout(() => processTTSQueue(), 500);
             return;
         }
 
-        // Vietnamese greeting: "Xin chào bạn [Name]"
-        const text = `Xin chào bạn ${item.name}`;
-        
-        const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleApiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                input: { text },
-                voice: {
-                    languageCode: 'vi-VN', // Vietnamese
-                    name: 'vi-VN-Wavenet-A' // Vietnamese voice
-                },
-                audioConfig: { 
-                    audioEncoding: 'MP3', 
-                    pitch: 0,
-                    speakingRate: 1.0
-                }
-            })
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+        // Check if TTS is already cached in database
+        if (person.ttsGreeting) {
+            // Use cached audio for instant playback
+            const audio = new Audio(`data:audio/mp3;base64,${person.ttsGreeting}`);
             
-            // Wait for audio to finish before processing next item
             await new Promise((resolve) => {
                 audio.onended = resolve;
                 audio.onerror = resolve;
@@ -420,8 +430,56 @@ async function processTTSQueue() {
                 });
             });
             
-            // Mark as spoken
             lastSpokenFaces.set(item.personId, item.timestamp);
+        } else {
+            // Generate TTS and cache it in database
+            const googleApiKey = await getSetting('googleApiKey');
+            if (!googleApiKey) {
+                console.warn('Google API key not configured');
+                isProcessingTTS = false;
+                return;
+            }
+
+            const text = `Xin chào bạn ${item.name}`;
+            
+            const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleApiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    input: { text },
+                    voice: {
+                        languageCode: 'vi-VN',
+                        name: 'vi-VN-Wavenet-A'
+                    },
+                    audioConfig: { 
+                        audioEncoding: 'MP3', 
+                        pitch: 0,
+                        speakingRate: 1.0
+                    }
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                
+                // Store TTS in database for future use
+                person.ttsGreeting = data.audioContent;
+                await updatePerson(person);
+                console.log(`✅ Generated and cached TTS for: ${item.name}`);
+                
+                const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+                
+                await new Promise((resolve) => {
+                    audio.onended = resolve;
+                    audio.onerror = resolve;
+                    audio.play().catch(e => {
+                        console.log('Audio playback prevented:', e);
+                        resolve();
+                    });
+                });
+                
+                lastSpokenFaces.set(item.personId, item.timestamp);
+            }
         }
     } catch (error) {
         console.error('TTS Error:', error);

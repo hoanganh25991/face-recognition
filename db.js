@@ -80,12 +80,19 @@ async function deletePerson(id) {
     });
 }
 
-async function updatePerson(id, name, birthday) {
-    const person = await getPerson(id);
-    if (!person) throw new Error('Person not found');
+async function updatePerson(personOrId, name, birthday) {
+    let person;
     
-    person.name = name;
-    person.birthday = birthday;
+    // If first argument is an object, update the entire person
+    if (typeof personOrId === 'object') {
+        person = personOrId;
+    } else {
+        // Legacy: update only name and birthday by ID
+        person = await getPerson(personOrId);
+        if (!person) throw new Error('Person not found');
+        person.name = name;
+        person.birthday = birthday;
+    }
     
     const transaction = db.transaction([PEOPLE_STORE], 'readwrite');
     const store = transaction.objectStore(PEOPLE_STORE);
