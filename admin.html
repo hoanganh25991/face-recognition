@@ -8,12 +8,12 @@
     <title>Admin Panel - Face Recognition</title>
     
     <!-- Favicons -->
-    <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="images/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="images/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="images/apple-touch-icon.png">
     
     <!-- PWA Manifest -->
-    <link rel="manifest" href="/manifest.json">
+    <link rel="manifest" href="manifest.json">
     <style>
         * {
             margin: 0;
@@ -387,6 +387,9 @@
                 <button class="btn btn-secondary" onclick="document.getElementById('imageUpload').click()">🖼️ Upload Image</button>
                 <input type="file" id="imageUpload" accept="image/*" multiple style="display: none;" onchange="uploadImages(event)">
             </div>
+
+            <!-- Capture status (shows right below capture button) -->
+            <div id="captureStatus" class="status-message" style="margin-top: -8px; margin-bottom: 12px;"></div>
 
             <!-- Captured/Uploaded Images Preview -->
             <div id="capturedImages" style="display: none; margin-top: 12px;">

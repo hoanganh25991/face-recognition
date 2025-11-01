@@ -56,22 +56,29 @@ async function initAdmin() {
 async function captureFace() {
     try {
         if (!registerVideo.srcObject) {
-            showMessage('registerStatus', 'Camera not initialized', 'error');
+            showMessage('captureStatus', 'Camera not initialized', 'error');
             return;
         }
+
+        // Show processing message
+        showMessage('captureStatus', '📸 Detecting face...', 'info');
 
         // Draw current video frame to canvas
         registerCtx.drawImage(registerVideo, 0, 0, registerCanvas.width, registerCanvas.height);
 
+        // Use more lenient detection options for better success rate
         const detection = await faceapi
-            .detectSingleFace(registerCanvas, new faceapi.TinyFaceDetectorOptions())
+            .detectSingleFace(registerCanvas, new faceapi.TinyFaceDetectorOptions({
+                inputSize: 416,  // Larger input for better accuracy
+                scoreThreshold: 0.4  // Lower threshold to detect more faces
+            }))
             .withFaceLandmarks()
             .withFaceDescriptor();
 
         if (!detection) {
-            // Clear canvas on error so webcam remains visible
+            // Clear canvas so webcam remains visible
             registerCtx.clearRect(0, 0, registerCanvas.width, registerCanvas.height);
-            showMessage('registerStatus', 'No face detected. Please try again.', 'error');
+            showMessage('captureStatus', '❌ No face detected. Position yourself clearly in view.', 'error');
             return;
         }
 
@@ -89,12 +96,22 @@ async function captureFace() {
         
         updateImagePreview();
         registerBtn.disabled = false;
-        showMessage('registerStatus', `✅ Face ${capturedImages.length} captured! Add more or register.`, 'success');
+        
+        // Show success in capture status
+        showMessage('captureStatus', `✅ Face ${capturedImages.length} captured! You can capture more.`, 'success');
+        
+        // Auto-hide success message after 2 seconds
+        setTimeout(() => {
+            const captureStatusEl = document.getElementById('captureStatus');
+            if (captureStatusEl.classList.contains('success')) {
+                captureStatusEl.className = 'status-message';
+            }
+        }, 2000);
     } catch (error) {
         console.error('Capture error:', error);
         // Clear canvas on error
         registerCtx.clearRect(0, 0, registerCanvas.width, registerCanvas.height);
-        showMessage('registerStatus', 'Error capturing face: ' + error.message, 'error');
+        showMessage('captureStatus', 'Error: ' + error.message, 'error');
     }
 }
 
