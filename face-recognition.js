@@ -16,10 +16,10 @@ let ttsQueue = [];
 let isProcessingTTS = false;
 
 // Thresholds - loaded from settings on startup
-let CONFIDENCE_THRESHOLD = 0.50;
-let DISTANCE_THRESHOLD = 0.6;
+let CONFIDENCE_THRESHOLD = 0.60;
+let DISTANCE_THRESHOLD = 0.58;
 const SPEAK_COOLDOWN = 15000; // 15 seconds cooldown
-const OUT_OF_FRAME_THRESHOLD = 2000; // 2 seconds - reset greeting if person was gone this long
+const OUT_OF_FRAME_THRESHOLD = 1000; // seconds - reset greeting if person was gone this long
 
 async function startApp() {
     try {
@@ -140,6 +140,8 @@ async function detectFaces() {
         // Clear SVG
         faceLinesSvg.innerHTML = '';
 
+        // Track people detected in THIS frame
+        const currentlyDetectedPeople = new Set();
         recognizedFaces.clear();
 
         if (detections.length === 0) {
@@ -195,6 +197,8 @@ async function detectFaces() {
                     const confidence = Math.round((1 - bestDistance) * 100);
                     if (confidence >= CONFIDENCE_THRESHOLD * 100) {
                         isRecognized = true;
+                        currentlyDetectedPeople.add(bestMatch.id);
+                        
                         recognizedFaces.set(bestMatch.id, {
                             name: bestMatch.name,
                             dob: bestMatch.dob,
@@ -224,6 +228,13 @@ async function detectFaces() {
 
             updateBanner();
         }
+        
+        // Update lastSeenInFrame for all detected people
+        const now = Date.now();
+        currentlyDetectedPeople.forEach(personId => {
+            lastSeenInFrame.set(personId, now);
+        });
+        
     } catch (error) {
         console.error('Detection error:', error);
     }
@@ -366,8 +377,8 @@ async function speakRecognition(person, confidence) {
         lastSpokenFaces.delete(person.id); // Reset cooldown
     }
     
-    // Update last seen time for this person
-    lastSeenInFrame.set(person.id, now);
+    // NOTE: lastSeenInFrame is now updated at the end of detectFaces() for all detected people
+    // This ensures we only count actual out-of-frame time, not skipped frame detection
 
     // Check if we've recently greeted this person (within cooldown period)
     if (now - lastSpoken < SPEAK_COOLDOWN) {
