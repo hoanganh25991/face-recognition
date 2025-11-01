@@ -1,22 +1,31 @@
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-const statusEl = document.getElementById('status');
-const recognizedListEl = document.getElementById('recognizedList');
+const videoContainer = document.getElementById('videoContainer');
+const startScreen = document.getElementById('startScreen');
+const bannerContent = document.getElementById('bannerContent');
+const faceLinesSvg = document.getElementById('faceLines');
 
 let people = [];
 let recognizedFaces = new Map();
 let lastSpokenFaces = new Map();
+let isAppStarted = false;
+let ttsEnabled = false;
+let ttsQueue = [];
+let isProcessingTTS = false;
 
-const CONFIDENCE_THRESHOLD = 0.6;
+const CONFIDENCE_THRESHOLD = 0.50;
 const DISTANCE_THRESHOLD = 0.6;
-const SPEAK_COOLDOWN = 5000;
+const SPEAK_COOLDOWN = 15000; // 15 seconds cooldown
 
-async function initializeApp() {
+async function startApp() {
     try {
-        await initDB();
-        statusEl.textContent = '⏳ Loading AI models...';
-        statusEl.className = 'status loading';
+        startScreen.style.display = 'none';
+        videoContainer.style.display = 'flex';
+        isAppStarted = true;
+        ttsEnabled = true;
+
+        showStatus('⏳ Loading AI models...');
 
         const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.8/model/';
         await Promise.all([
@@ -25,177 +34,420 @@ async function initializeApp() {
             faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
         ]);
 
+        await initDB();
         people = await getAllPeople();
-        statusEl.textContent = '✅ Ready';
-        statusEl.className = 'status ready';
-
-        await setupWebcam();
-        startFaceDetection();
-    } catch (error) {
-        console.error('Initialization error:', error);
-        statusEl.textContent = '❌ Error: ' + error.message;
-    }
-}
-
-async function setupWebcam() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 1280, height: 720 }
+        
+        console.log(`Loaded ${people.length} people for recognition`);
+        people.forEach(person => {
+            const descCount = person.descriptors ? person.descriptors.length : 1;
+            console.log(`- ${person.name}: ${descCount} descriptor(s)`);
         });
+
+        // Setup video
+        const constraints = {
+            video: {
+                facingMode: 'user',
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         video.srcObject = stream;
 
-        return new Promise((resolve) => {
-            video.onloadedmetadata = () => {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                resolve();
-            };
-        });
-    } catch (error) {
-        statusEl.textContent = '❌ Camera access denied';
-        throw error;
-    }
-}
-
-async function startFaceDetection() {
-    const detectionOptions = new faceapi.TinyFaceDetectorOptions({
-        inputSize: 416,
-        scoreThreshold: 0.5
-    });
-
-    setInterval(async () => {
-        try {
-            const detections = await faceapi
-                .detectAllFaces(video, detectionOptions)
-                .withFaceLandmarks()
-                .withFaceDescriptors();
-
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            recognizedFaces.clear();
-
-            for (const detection of detections) {
-                const { box, landmarks, descriptor } = detection;
-                drawBox(box);
-                
-                const match = findBestMatch(descriptor);
-                
-                if (match) {
-                    recognizedFaces.set(match.id, {
-                        ...match,
-                        distance: match.distance
+        // Wait for video to load
+        video.onloadedmetadata = () => {
+            // Set canvas to match the displayed size, not the video resolution
+            resizeCanvas();
+            showStatus('🟢 System Ready - Detecting faces...');
+            detectFaces();
+        };
+        
+        // Handle window resize
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Auto-reload people list when page becomes visible
+        document.addEventListener('visibilitychange', async () => {
+            if (!document.hidden && isAppStarted) {
+                const newPeople = await getAllPeople();
+                if (newPeople.length !== people.length) {
+                    people = newPeople;
+                    console.log(`✅ Auto-reloaded: ${people.length} people`);
+                    people.forEach(person => {
+                        const descCount = person.descriptors ? person.descriptors.length : 1;
+                        console.log(`- ${person.name}: ${descCount} descriptor(s)`);
                     });
-                    drawRecognized(box, match);
-                    speakRecognition(match);
-                } else {
-                    drawUnknown(box);
                 }
             }
-
-            updateUI();
-        } catch (error) {
-            console.error('Detection error:', error);
-        }
-    }, 100);
+        });
+    } catch (error) {
+        console.error('Error:', error);
+        showStatus('❌ Error: ' + error.message);
+    }
 }
 
-function findBestMatch(descriptor) {
-    if (people.length === 0) return null;
+function showStatus(message) {
+    bannerContent.innerHTML = `<div class="status-indicator"></div><span style="color: #00d4ff; font-size: 12px;">${message}</span>`;
+}
 
-    let bestMatch = null;
-    let bestDistance = DISTANCE_THRESHOLD;
+function resizeCanvas() {
+    // Get the displayed dimensions of the video
+    const displayWidth = video.offsetWidth;
+    const displayHeight = video.offsetHeight;
+    
+    // Set canvas to match displayed video size
+    canvas.width = displayWidth;
+    canvas.height = displayHeight;
+    
+    // Update canvas style to match
+    canvas.style.width = displayWidth + 'px';
+    canvas.style.height = displayHeight + 'px';
+    
+    faceLinesSvg.setAttribute('viewBox', `0 0 ${displayWidth} ${displayHeight}`);
+}
 
-    for (const person of people) {
-        const personDescriptor = new Float32Array(person.faceDescriptor);
-        const distance = faceapi.euclideanDistance(descriptor, personDescriptor);
+async function detectFaces() {
+    if (!isAppStarted) return;
 
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            bestMatch = {
-                id: person.id,
-                name: person.name,
-                birthday: person.birthday,
-                distance: distance
-            };
+    try {
+        const detections = await faceapi
+            .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+            .withFaceLandmarks()
+            .withFaceDescriptors();
+
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'rgba(0, 212, 255, 0.1)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Clear SVG
+        faceLinesSvg.innerHTML = '';
+
+        recognizedFaces.clear();
+
+        if (detections.length === 0) {
+            showStatus('👀 No faces detected - Looking...');
+        } else {
+            // Calculate scale factors between video resolution and display size
+            const scaleX = canvas.width / video.videoWidth;
+            const scaleY = canvas.height / video.videoHeight;
+
+            // Process each detected face
+            detections.forEach((detection, index) => {
+                // Scale the bounding box to match canvas display size
+                const originalBox = detection.detection.box;
+                const box = {
+                    x: originalBox.x * scaleX,
+                    y: originalBox.y * scaleY,
+                    width: originalBox.width * scaleX,
+                    height: originalBox.height * scaleY
+                };
+                
+                // Scale landmarks
+                const scaledLandmarks = {
+                    positions: detection.landmarks.positions.map(point => ({
+                        x: point.x * scaleX,
+                        y: point.y * scaleY
+                    }))
+                };
+                
+                const descriptor = detection.descriptor;
+
+                // Try to match with known faces first
+                let bestMatch = null;
+                let bestDistance = DISTANCE_THRESHOLD;
+                let isRecognized = false;
+
+                people.forEach(person => {
+                    // Support both single descriptor (old format) and multiple descriptors (new format)
+                    const descriptors = person.descriptors || [person.descriptor];
+                    
+                    // Find the best match among all descriptors for this person
+                    descriptors.forEach((personDescriptor, descIndex) => {
+                        if (personDescriptor) {
+                            const distance = faceapi.euclideanDistance(descriptor, personDescriptor);
+                            if (distance < bestDistance) {
+                                bestDistance = distance;
+                                bestMatch = person;
+                            }
+                        }
+                    });
+                });
+
+                if (bestMatch) {
+                    const confidence = Math.round((1 - bestDistance) * 100);
+                    if (confidence >= CONFIDENCE_THRESHOLD * 100) {
+                        isRecognized = true;
+                        recognizedFaces.set(bestMatch.id, {
+                            name: bestMatch.name,
+                            dob: bestMatch.dob,
+                            confidence: confidence,
+                            box: box
+                        });
+
+                        // Draw green box for recognized face
+                        drawFaceBox(box, true);
+
+                        // Draw label
+                        drawFaceLabel(box, bestMatch.name, confidence);
+
+                        // Speak if new
+                        speakRecognition(bestMatch, confidence);
+                    }
+                }
+
+                // Draw box with appropriate color
+                if (!isRecognized) {
+                    drawFaceBox(box, false);
+                }
+
+                // Draw AI-like connection lines with scaled landmarks
+                drawAILines(scaledLandmarks, index);
+            });
+
+            updateBanner();
         }
+    } catch (error) {
+        console.error('Detection error:', error);
     }
 
-    return bestMatch;
+    requestAnimationFrame(detectFaces);
 }
 
-function drawBox(box) {
-    const { x, y, width, height } = box;
+function drawFaceBox(box, isRecognized = false) {
+    const gradient = ctx.createLinearGradient(box.x, box.y, box.x + box.width, box.y + box.height);
     
-    ctx.strokeStyle = '#4CAF50';
+    if (isRecognized) {
+        // Green gradient for recognized faces
+        gradient.addColorStop(0, 'rgba(0, 255, 136, 0.6)');
+        gradient.addColorStop(1, 'rgba(0, 255, 100, 0.6)');
+    } else {
+        // Blue gradient for unrecognized faces
+        gradient.addColorStop(0, 'rgba(0, 212, 255, 0.4)');
+        gradient.addColorStop(1, 'rgba(0, 255, 136, 0.4)');
+    }
+    
+    ctx.strokeStyle = gradient;
     ctx.lineWidth = 3;
-    ctx.strokeRect(x, y, width, height);
-    
-    ctx.fillStyle = '#4CAF50';
-    ctx.fillRect(x, y + height, width, 30);
+    ctx.beginPath();
+    ctx.roundRect(box.x, box.y, box.width, box.height, 10);
+    ctx.stroke();
 }
 
-function drawRecognized(box, match) {
-    const { x, y, width, height } = box;
-    
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(x, y + height, width, 30);
-    
-    ctx.fillStyle = '#4CAF50';
-    ctx.font = 'bold 14px Arial';
-    ctx.fillText(`${match.name} (${new Date(match.birthday).getFullYear()})`, x + 10, y + height + 20);
-}
+function drawAILines(landmarks, index) {
+    if (!landmarks || landmarks.length === 0) return;
 
-function drawUnknown(box) {
-    const { x, y, width, height } = box;
+    const points = landmarks.positions;
     
-    ctx.strokeStyle = '#FFA500';
+    // Draw connections between key facial landmarks
+    const keyPoints = [0, 8, 16, 36, 45, 30]; // forehead, chin, ears, eyes, nose
+
+    ctx.strokeStyle = 'rgba(0, 212, 255, 0.5)';
     ctx.lineWidth = 2;
-    ctx.setLineDash([5, 5]);
-    ctx.strokeRect(x, y, width, height);
-    ctx.setLineDash([]);
-    
-    ctx.fillStyle = 'rgba(255, 165, 0, 0.2)';
-    ctx.fillRect(x, y + height, width, 30);
-    
-    ctx.fillStyle = '#FFA500';
-    ctx.font = 'bold 14px Arial';
-    ctx.fillText('Unknown', x + 10, y + height + 20);
+
+    for (let i = 0; i < keyPoints.length - 1; i++) {
+        const p1 = points[keyPoints[i]];
+        const p2 = points[keyPoints[i + 1]];
+        
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+
+        // Draw circles at key points
+        ctx.fillStyle = 'rgba(0, 255, 136, 0.6)';
+        ctx.beginPath();
+        ctx.arc(p1.x, p1.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+    }
 }
 
-function updateUI() {
-    recognizedListEl.innerHTML = '';
-    
-    for (const [_, person] of recognizedFaces) {
-        const el = document.createElement('div');
-        el.className = 'recognized-person';
-        el.innerHTML = `
-            <div class="name">${person.name}</div>
-            <p>📅 ${new Date(person.birthday).toLocaleDateString('vi-VN')}</p>
-            <p class="confidence">Confidence: ${(1 - person.distance).toFixed(2)}</p>
-        `;
-        recognizedListEl.appendChild(el);
-    }
+function drawFaceLabel(box, name, confidence) {
+    const label = `${name} (${confidence}%)`;
+    const fontSize = 14;
+    const padding = 8;
 
+    ctx.font = `bold ${fontSize}px Arial`;
+    const metrics = ctx.measureText(label);
+    const width = metrics.width + padding * 2;
+    const height = fontSize + padding * 2;
+
+    const x = box.x;
+    const y = Math.max(height, box.y - 10);
+
+    // Save current context state
+    ctx.save();
+
+    // Draw background
+    const gradient = ctx.createLinearGradient(x, y - height, x, y);
+    gradient.addColorStop(0, 'rgba(0, 212, 255, 0.9)');
+    gradient.addColorStop(1, 'rgba(0, 212, 255, 0.8)');
+    
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.roundRect(x, y - height, width, height, 5);
+    ctx.fill();
+
+    // Flip horizontally for text only (since canvas is mirrored via CSS)
+    // Translate to text position, scale to flip, then translate back
+    ctx.translate(x + width / 2, y - height / 2);
+    ctx.scale(-1, 1);
+    ctx.translate(-(x + width / 2), -(y - height / 2));
+
+    // Draw text
+    ctx.fillStyle = '#0a0e27';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, x + padding, y - padding);
+    
+    // Restore context state
+    ctx.restore();
+}
+
+function updateBanner() {
     if (recognizedFaces.size === 0) {
-        recognizedListEl.innerHTML = '<p style="color: #888; text-align: center;">No faces recognized</p>';
+        showStatus('👀 Looking for faces...');
+        return;
     }
+
+    let html = '<div class="status-indicator"></div>';
+    
+    recognizedFaces.forEach((face, id) => {
+        const age = calculateAge(face.dob);
+        const ageStr = age ? ` (${age}y)` : '';
+        html += `<div class="person-badge">
+            <span class="name">${face.name}</span>
+            <span class="age">${face.confidence}%${ageStr}</span>
+        </div>`;
+    });
+
+    bannerContent.innerHTML = html;
 }
 
-function speakRecognition(person) {
+function calculateAge(dobString) {
+    if (!dobString) return null;
+    const dob = new Date(dobString);
+    const today = new Date();
+    let age = today.getFullYear() - dob.getFullYear();
+    const monthDiff = today.getMonth() - dob.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+        age--;
+    }
+    return age > 0 ? age : null;
+}
+
+async function speakRecognition(person, confidence) {
+    if (!ttsEnabled) return;
+
     const now = Date.now();
     const lastSpoken = lastSpokenFaces.get(person.id) || 0;
 
-    if (now - lastSpoken < SPEAK_COOLDOWN) return;
+    // Check if we've recently greeted this person (within cooldown period)
+    if (now - lastSpoken < SPEAK_COOLDOWN) {
+        return;
+    }
 
+    // Check if this person is already in the queue (waiting to be greeted)
+    const alreadyQueued = ttsQueue.some(item => item.personId === person.id);
+    if (alreadyQueued) {
+        return;
+    }
+
+    // Add to queue and mark as "pending" to prevent duplicates
+    ttsQueue.push({
+        personId: person.id,
+        name: person.name,
+        timestamp: now
+    });
+    
+    // Update last spoken time immediately when adding to queue
+    // This prevents the same person being added multiple times before the audio plays
     lastSpokenFaces.set(person.id, now);
     
-    const text = `Xin chào, bạn ${person.name}`;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'vi-VN';
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
-    
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
+    // Start processing queue if not already processing
+    if (!isProcessingTTS) {
+        processTTSQueue();
+    }
 }
 
-initializeApp();
+async function processTTSQueue() {
+    if (ttsQueue.length === 0) {
+        isProcessingTTS = false;
+        return;
+    }
+
+    isProcessingTTS = true;
+    const item = ttsQueue.shift();
+
+    try {
+        const googleApiKey = await getSetting('googleApiKey');
+        if (!googleApiKey) {
+            console.warn('Google API key not configured');
+            isProcessingTTS = false;
+            return;
+        }
+
+        // Vietnamese greeting: "Xin chào bạn [Name]"
+        const text = `Xin chào bạn ${item.name}`;
+        
+        const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleApiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                input: { text },
+                voice: {
+                    languageCode: 'vi-VN', // Vietnamese
+                    name: 'vi-VN-Wavenet-A' // Vietnamese voice
+                },
+                audioConfig: { 
+                    audioEncoding: 'MP3', 
+                    pitch: 0,
+                    speakingRate: 1.0
+                }
+            })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+            
+            // Wait for audio to finish before processing next item
+            await new Promise((resolve) => {
+                audio.onended = resolve;
+                audio.onerror = resolve;
+                audio.play().catch(e => {
+                    console.log('Audio playback prevented:', e);
+                    resolve();
+                });
+            });
+            
+            // Mark as spoken
+            lastSpokenFaces.set(item.personId, item.timestamp);
+        }
+    } catch (error) {
+        console.error('TTS Error:', error);
+    }
+
+    // Process next item in queue after a short delay
+    setTimeout(() => processTTSQueue(), 500);
+}
+
+async function reloadPeople() {
+    people = await getAllPeople();
+    showStatus('✅ People list reloaded');
+}
+
+// Support for older browsers
+if (!Path2D.prototype.roundRect && !CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        this.beginPath();
+        this.moveTo(x + r, y);
+        this.arcTo(x + w, y, x + w, y + h, r);
+        this.arcTo(x + w, y + h, x, y + h, r);
+        this.arcTo(x, y + h, x, y, r);
+        this.arcTo(x, y, x + w, y, r);
+        this.closePath();
+        return this;
+    };
+}

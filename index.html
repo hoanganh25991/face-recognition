@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Face Recognition - Family</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#00d4ff">
+    <meta name="description" content="AI-powered face recognition system with real-time detection and Vietnamese TTS">
+    <title>Face Recognition - AI</title>
+    
+    <!-- Favicons -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon.png">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json">
     <style>
         * {
             margin: 0;
@@ -12,50 +22,74 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #1a1a1a;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0e27;
             color: #fff;
             overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Portrait mode - vertical layout */
+        .app {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100%;
         }
 
         .header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 15px 20px;
-            background: #222;
-            border-bottom: 1px solid #444;
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border-bottom: 2px solid #00d4ff;
+            box-shadow: 0 2px 10px rgba(0, 212, 255, 0.1);
+            flex-shrink: 0;
         }
 
         .header h1 {
-            font-size: 24px;
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: 1px;
         }
 
-        .header a {
-            background: #4CAF50;
-            color: white;
-            padding: 10px 20px;
-            text-decoration: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-
-        .header a:hover {
-            background: #45a049;
-        }
-
-        .container {
+        .header-buttons {
             display: flex;
-            gap: 20px;
-            padding: 20px;
-            height: calc(100vh - 80px);
+            gap: 8px;
+        }
+
+        .emoji-btn {
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid #00d4ff;
+            color: #00d4ff;
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            font-size: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+
+        .emoji-btn:hover {
+            background: rgba(0, 212, 255, 0.2);
+            transform: scale(1.05);
+        }
+
+        .emoji-btn:active {
+            transform: scale(0.95);
         }
 
         .video-container {
             flex: 1;
             position: relative;
             background: #000;
-            border-radius: 10px;
             overflow: hidden;
             display: flex;
             align-items: center;
@@ -76,90 +110,219 @@
             transform: scaleX(-1);
         }
 
-        .info-panel {
-            width: 300px;
-            background: #222;
-            border-radius: 10px;
-            padding: 20px;
-            overflow-y: auto;
-        }
-
-        .info-panel h2 {
-            margin-bottom: 20px;
-            color: #4CAF50;
-        }
-
-        .recognized-person {
-            background: #333;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            border-left: 4px solid #4CAF50;
-        }
-
-        .recognized-person p {
-            margin: 5px 0;
-            font-size: 14px;
-        }
-
-        .recognized-person .name {
-            font-weight: bold;
-            font-size: 16px;
-            color: #4CAF50;
-        }
-
-        .recognized-person .confidence {
-            color: #888;
-            font-size: 12px;
-            margin-top: 8px;
-        }
-
-        .status {
-            text-align: center;
-            padding: 15px;
-            background: #333;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-
-        .status.loading {
-            color: #FFA500;
-        }
-
-        .status.ready {
-            color: #4CAF50;
-        }
-
-        .face-info-overlay {
+        /* Face detection lines and connections */
+        .face-lines {
             position: absolute;
-            background: rgba(0, 0, 0, 0.8);
-            color: #4CAF50;
-            padding: 8px 15px;
-            border-radius: 5px;
-            font-size: 14px;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+
+        .face-label {
+            position: absolute;
+            background: rgba(0, 212, 255, 0.95);
+            color: #0a0e27;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
             white-space: nowrap;
-            border-bottom: 3px solid #4CAF50;
+            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
+            z-index: 10;
+        }
+
+        /* Bottom info banner - single row */
+        .bottom-banner {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.7));
+            padding: 12px 16px;
+            max-height: 60px;
+            overflow: hidden;
+            z-index: 20;
+            border-top: 2px solid #00d4ff;
+        }
+
+        .banner-content {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            overflow-x: auto;
+            scroll-behavior: smooth;
+        }
+
+        .person-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid #00d4ff;
+            padding: 6px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .person-badge .name {
+            font-weight: 600;
+            color: #00d4ff;
+        }
+
+        .person-badge .age {
+            color: #00d4ff;
+            opacity: 0.7;
+            font-size: 11px;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            background: #00ff88;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Start screen */
+        #startScreen {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            flex-direction: column;
+            gap: 30px;
+            background: linear-gradient(135deg, #0a0e27 0%, #16213e 100%);
+        }
+
+        .start-content {
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .start-icon {
+            font-size: 80px;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+        }
+
+        .start-text h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #00d4ff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .start-text p {
+            font-size: 14px;
+            color: #888;
+        }
+
+        .start-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: 2px solid #00d4ff;
+            background: rgba(0, 212, 255, 0.1);
+            font-size: 40px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+        }
+
+        .start-btn:hover {
+            background: rgba(0, 212, 255, 0.2);
+            box-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
+            transform: scale(1.05);
+        }
+
+        .start-btn:active {
+            transform: scale(0.95);
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(0, 212, 255, 0.2);
+            border-top: 3px solid #00d4ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (orientation: landscape) {
+            .bottom-banner {
+                bottom: auto;
+                right: 0;
+                top: 0;
+                left: auto;
+                width: 250px;
+                height: 100%;
+                border-top: none;
+                border-left: 2px solid #00d4ff;
+            }
+
+            .banner-content {
+                flex-direction: column;
+                overflow-y: auto;
+                overflow-x: hidden;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>👤 Face Recognition System</h1>
-        <a href="admin.html">⚙️ Admin Panel</a>
-    </div>
-
-    <div class="container">
-        <div class="video-container">
-            <video id="video" autoplay muted playsinline></video>
-            <canvas id="canvas"></canvas>
+    <div class="app">
+        <div class="header">
+            <h1>🤖 AI Face Recognition</h1>
+            <div class="header-buttons">
+                <button class="emoji-btn" onclick="window.location.href='admin.html'" title="Admin Panel">⚙️</button>
+            </div>
         </div>
 
-        <div class="info-panel">
-            <div class="status loading" id="status">
-                ⏳ Loading models...
+        <div class="video-container" id="videoContainer" style="display: none;">
+            <video id="video" autoplay muted playsinline></video>
+            <canvas id="canvas"></canvas>
+            <svg class="face-lines" id="faceLines" style="width: 100%; height: 100%;"></svg>
+            <div class="bottom-banner" id="bottomBanner">
+                <div class="banner-content" id="bannerContent">
+                    <div class="status-indicator"></div>
+                    <span style="color: #00d4ff; font-size: 12px;">System Active</span>
+                </div>
             </div>
-            <h2>Recognized Faces</h2>
-            <div id="recognizedList"></div>
+        </div>
+
+        <div id="startScreen">
+            <div class="start-content">
+                <div class="start-icon">🤖</div>
+                <div class="start-text">
+                    <h1>AI Face Recognition</h1>
+                    <p>Advanced face detection system</p>
+                </div>
+                <button class="start-btn" onclick="startApp()">▶️</button>
+            </div>
         </div>
     </div>
 

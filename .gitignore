@@ -1,0 +1,5 @@
+node_modules/
+service-account-key.json
+.DS_Store
+*.log
+google-api-key.txt

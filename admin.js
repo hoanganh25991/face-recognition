@@ -5,14 +5,22 @@ const personNameInput = document.getElementById('personName');
 const personBirthdayInput = document.getElementById('personBirthday');
 const captureBtn = document.getElementById('captureBtn');
 const registerBtn = document.getElementById('registerBtn');
-const statusEl = document.getElementById('registerStatus');
+const registerStatus = document.getElementById('registerStatus');
 const peopleListEl = document.getElementById('peopleList');
+const googleApiKeyInput = document.getElementById('googleApiKey');
+const settingsStatus = document.getElementById('settingsStatus');
 
-let capturedDescriptor = null;
+let capturedImages = []; // Array to store multiple images and descriptors
+let googleApiKey = null;
 
 async function initAdmin() {
     try {
         await initDB();
+        
+        googleApiKey = await getSetting('googleApiKey');
+        if (googleApiKey) {
+            googleApiKeyInput.value = googleApiKey;
+        }
         
         const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.8/model/';
         await Promise.all([
@@ -21,96 +29,246 @@ async function initAdmin() {
             faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
         ]);
 
-        await setupWebcam();
-        await loadPeopleList();
-    } catch (error) {
-        showStatus('Error: ' + error.message, 'error');
-    }
-}
+        // Setup video
+        const constraints = {
+            video: {
+                facingMode: 'user',
+                width: { ideal: 400 },
+                height: { ideal: 400 }
+            }
+        };
 
-async function setupWebcam() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 640, height: 480 }
-        });
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         registerVideo.srcObject = stream;
 
-        return new Promise((resolve) => {
-            registerVideo.onloadedmetadata = () => {
-                registerCanvas.width = registerVideo.videoWidth;
-                registerCanvas.height = registerVideo.videoHeight;
-                resolve();
-            };
-        });
+        registerVideo.onloadedmetadata = () => {
+            registerCanvas.width = registerVideo.videoWidth;
+            registerCanvas.height = registerVideo.videoHeight;
+        };
+
+        await loadPeopleList();
     } catch (error) {
-        showStatus('Camera access denied', 'error');
-        throw error;
+        console.error('Init error:', error);
+        showMessage('registerStatus', 'Error initializing admin panel: ' + error.message, 'error');
     }
 }
 
 async function captureFace() {
     try {
-        const detections = await faceapi
-            .detectSingleFace(registerVideo, new faceapi.TinyFaceDetectorOptions())
-            .withFaceLandmarks()
-            .withFaceDescriptor();
-
-        if (!detections) {
-            showStatus('No face detected. Please position your face clearly.', 'error');
+        if (!registerVideo.srcObject) {
+            showMessage('registerStatus', 'Camera not initialized', 'error');
             return;
         }
 
-        capturedDescriptor = detections.descriptor;
+        // Draw current video frame to canvas
+        registerCtx.drawImage(registerVideo, 0, 0, registerCanvas.width, registerCanvas.height);
 
+        const detection = await faceapi
+            .detectSingleFace(registerCanvas, new faceapi.TinyFaceDetectorOptions())
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+
+        if (!detection) {
+            // Clear canvas on error so webcam remains visible
+            registerCtx.clearRect(0, 0, registerCanvas.width, registerCanvas.height);
+            showMessage('registerStatus', 'No face detected. Please try again.', 'error');
+            return;
+        }
+
+        // Save the image data before clearing
+        const imageData = registerCanvas.toDataURL('image/jpeg', 0.9);
+        
+        // Clear canvas immediately so webcam feed remains visible
         registerCtx.clearRect(0, 0, registerCanvas.width, registerCanvas.height);
-        registerCtx.drawImage(registerVideo, 0, 0);
-
-        const { box } = detections.detection;
-        registerCtx.strokeStyle = '#4CAF50';
-        registerCtx.lineWidth = 3;
-        registerCtx.strokeRect(box.x, box.y, box.width, box.height);
-
+        
+        // Add to array of captured images
+        capturedImages.push({
+            descriptor: Array.from(detection.descriptor),
+            image: imageData
+        });
+        
+        updateImagePreview();
         registerBtn.disabled = false;
-        showStatus('Face captured! Fill in your details and click Register.', 'success');
+        showMessage('registerStatus', `✅ Face ${capturedImages.length} captured! Add more or register.`, 'success');
     } catch (error) {
-        showStatus('Error capturing face: ' + error.message, 'error');
+        console.error('Capture error:', error);
+        // Clear canvas on error
+        registerCtx.clearRect(0, 0, registerCanvas.width, registerCanvas.height);
+        showMessage('registerStatus', 'Error capturing face: ' + error.message, 'error');
     }
 }
 
+async function uploadImages(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    showMessage('registerStatus', '⏳ Processing uploaded images...', 'info');
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const file of files) {
+        try {
+            const img = await loadImage(file);
+            
+            // Create canvas for processing
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = img.width;
+            tempCanvas.height = img.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(img, 0, 0);
+
+            // Detect face
+            const detection = await faceapi
+                .detectSingleFace(tempCanvas, new faceapi.TinyFaceDetectorOptions())
+                .withFaceLandmarks()
+                .withFaceDescriptor();
+
+            if (!detection) {
+                console.warn('No face detected in:', file.name);
+                errorCount++;
+                continue;
+            }
+
+            const imageData = tempCanvas.toDataURL('image/jpeg', 0.9);
+            
+            capturedImages.push({
+                descriptor: Array.from(detection.descriptor),
+                image: imageData
+            });
+            
+            successCount++;
+        } catch (error) {
+            console.error('Error processing', file.name, error);
+            errorCount++;
+        }
+    }
+
+    updateImagePreview();
+    
+    if (successCount > 0) {
+        registerBtn.disabled = false;
+        showMessage('registerStatus', `✅ ${successCount} image(s) processed${errorCount > 0 ? ` (${errorCount} failed)` : ''}`, 'success');
+    } else {
+        showMessage('registerStatus', `❌ No faces detected in uploaded images`, 'error');
+    }
+    
+    // Reset file input
+    event.target.value = '';
+}
+
+function loadImage(file) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = URL.createObjectURL(file);
+    });
+}
+
+function updateImagePreview() {
+    const container = document.getElementById('imagePreviewContainer');
+    const countEl = document.getElementById('imageCount');
+    const capturedImagesDiv = document.getElementById('capturedImages');
+    
+    if (capturedImages.length === 0) {
+        capturedImagesDiv.style.display = 'none';
+        return;
+    }
+    
+    capturedImagesDiv.style.display = 'block';
+    countEl.textContent = capturedImages.length;
+    container.innerHTML = '';
+    
+    capturedImages.forEach((item, index) => {
+        const imgContainer = document.createElement('div');
+        imgContainer.style.cssText = 'position: relative; width: 80px; height: 80px; border-radius: 8px; overflow: hidden; border: 2px solid #00d4ff;';
+        
+        const img = document.createElement('img');
+        img.src = item.image;
+        img.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.innerHTML = '×';
+        deleteBtn.style.cssText = 'position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; background: rgba(255,76,76,0.9); color: white; border: none; cursor: pointer; font-size: 16px; line-height: 1; padding: 0;';
+        deleteBtn.onclick = () => removeImage(index);
+        
+        imgContainer.appendChild(img);
+        imgContainer.appendChild(deleteBtn);
+        container.appendChild(imgContainer);
+    });
+}
+
+function removeImage(index) {
+    capturedImages.splice(index, 1);
+    updateImagePreview();
+    
+    if (capturedImages.length === 0) {
+        registerBtn.disabled = true;
+    }
+    
+    showMessage('registerStatus', `Image removed. ${capturedImages.length} remaining.`, 'info');
+}
+
+function clearAllImages() {
+    capturedImages = [];
+    updateImagePreview();
+    registerBtn.disabled = true;
+    registerCtx.clearRect(0, 0, registerCanvas.width, registerCanvas.height);
+    showMessage('registerStatus', 'All images cleared', 'info');
+}
+
 async function registerPerson() {
-    const name = personNameInput.value.trim();
-    const birthday = personBirthdayInput.value;
-
-    if (!name) {
-        showStatus('Please enter a name', 'error');
-        return;
-    }
-
-    if (!birthday) {
-        showStatus('Please select a birthday', 'error');
-        return;
-    }
-
-    if (!capturedDescriptor) {
-        showStatus('Please capture a face first', 'error');
-        return;
-    }
-
     try {
-        const id = generateId();
-        await addPerson(id, name, birthday, capturedDescriptor);
+        const name = personNameInput.value.trim();
+        const dob = personBirthdayInput.value;
 
-        showStatus(`✅ ${name} registered successfully!`, 'success');
+        if (!name) {
+            showMessage('registerStatus', 'Please enter a name', 'error');
+            return;
+        }
 
+        if (capturedImages.length === 0) {
+            showMessage('registerStatus', 'Please capture or upload at least one image', 'error');
+            return;
+        }
+
+        // Store person with multiple descriptors
+        const person = {
+            id: Date.now().toString(),
+            name: name,
+            dob: dob || null,
+            descriptors: capturedImages.map(img => img.descriptor), // Array of descriptors
+            picture: capturedImages[0].image, // Use first image as primary picture
+            imageCount: capturedImages.length,
+            registered_at: new Date().toISOString()
+        };
+
+        await addPerson(person);
+
+        showMessage('registerStatus', `✅ ${name} registered with ${capturedImages.length} image(s)!`, 'success');
+        
+        // Reset form
         personNameInput.value = '';
         personBirthdayInput.value = '';
-        capturedDescriptor = null;
-        registerBtn.disabled = true;
-        registerCtx.clearRect(0, 0, registerCanvas.width, registerCanvas.height);
+        clearAllImages();
 
         await loadPeopleList();
     } catch (error) {
-        showStatus('Error registering person: ' + error.message, 'error');
+        console.error('Register error:', error);
+        showMessage('registerStatus', 'Error registering person: ' + error.message, 'error');
+    }
+}
+
+async function handleDeletePerson(id) {
+    if (confirm('Are you sure you want to delete this person?')) {
+        try {
+            await deletePerson(id);
+            showMessage('registerStatus', 'Person deleted successfully', 'success');
+            await loadPeopleList();
+        } catch (error) {
+            showMessage('registerStatus', 'Error deleting person: ' + error.message, 'error');
+        }
     }
 }
 
@@ -120,59 +278,274 @@ async function loadPeopleList() {
         peopleListEl.innerHTML = '';
 
         if (people.length === 0) {
-            peopleListEl.innerHTML = '<p style="grid-column: 1/-1; color: #888; text-align: center;">No registered people yet</p>';
+            peopleListEl.innerHTML = '<div style="text-align: center; color: #888; padding: 20px;">No registered people yet</div>';
             return;
         }
 
-        for (const person of people) {
+        people.forEach(person => {
+            const age = calculateAge(person.dob);
+            const ageStr = age ? ` (${age}y)` : '';
+            const dobStr = person.dob ? new Date(person.dob).toLocaleDateString() : 'Not set';
+            const imageCount = person.imageCount || (person.descriptors ? person.descriptors.length : 1);
+
             const card = document.createElement('div');
             card.className = 'person-card';
-            
-            const birthday = new Date(person.birthday);
-            const age = new Date().getFullYear() - birthday.getFullYear();
-
             card.innerHTML = `
-                <h3>${person.name}</h3>
-                <p>📅 ${birthday.toLocaleDateString('vi-VN')}</p>
-                <p>🎂 Age: ${age}</p>
-                <div class="id">ID: ${person.id}</div>
-                <div class="button-group">
-                    <button class="danger" onclick="handleDeletePerson('${person.id}', '${person.name}')">🗑️ Delete</button>
+                <div class="person-avatar">
+                    ${person.picture ? `<img src="${person.picture}" alt="${person.name}">` : '<div style="width: 100%; height: 100%; background: #333; display: flex; align-items: center; justify-content: center; color: #666;">📷</div>'}
+                </div>
+                <div class="person-info">
+                    <h3>${person.name}${ageStr}</h3>
+                    <p>📅 ${dobStr}</p>
+                    <p>🖼️ ${imageCount} image${imageCount > 1 ? 's' : ''}</p>
+                </div>
+                <div class="person-actions">
+                    <button class="btn btn-danger" onclick="handleDeletePerson('${person.id}')" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;">🗑️</button>
                 </div>
             `;
-
             peopleListEl.appendChild(card);
-        }
+        });
     } catch (error) {
-        showStatus('Error loading people: ' + error.message, 'error');
+        console.error('Load people error:', error);
+        peopleListEl.innerHTML = '<div style="color: #ff4c4c; padding: 20px;">Error loading people</div>';
     }
 }
 
-async function handleDeletePerson(id, name) {
-    if (confirm(`Are you sure you want to delete ${name}?`)) {
+async function saveApiKey() {
+    try {
+        const key = googleApiKeyInput.value.trim();
+        
+        if (!key) {
+            showMessage('settingsStatus', 'Please enter an API key', 'error');
+            return;
+        }
+
+        await setSetting('googleApiKey', key);
+        showMessage('settingsStatus', '✅ API Key saved successfully!', 'success');
+    } catch (error) {
+        console.error('Save error:', error);
+        showMessage('settingsStatus', 'Error saving API key: ' + error.message, 'error');
+    }
+}
+
+async function loadPredefinedData() {
+    // Create file input for JSON upload
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
         try {
-            await deletePerson(id);
-            showStatus(`${name} deleted successfully`, 'success');
+            showMessage('registerStatus', '⏳ Loading JSON file...', 'info');
+            
+            const text = await file.text();
+            const data = JSON.parse(text);
+
+            if (!Array.isArray(data.people)) {
+                throw new Error('Invalid JSON format. Expected "people" array.');
+            }
+
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (const person of data.people) {
+                try {
+                    // Validate required fields
+                    if (!person.name || !person.pictures || !Array.isArray(person.pictures)) {
+                        console.warn('Skipping person: missing name or pictures array', person);
+                        errorCount++;
+                        continue;
+                    }
+
+                    const descriptors = [];
+                    const images = [];
+
+                    // Process each picture (URL or base64)
+                    for (const pictureSource of person.pictures) {
+                        try {
+                            const img = new Image();
+                            img.crossOrigin = 'anonymous';
+                            
+                            await new Promise((resolve, reject) => {
+                                img.onload = resolve;
+                                img.onerror = reject;
+                                img.src = pictureSource; // Can be URL or base64
+                            });
+
+                            // Create canvas for image processing
+                            const tempCanvas = document.createElement('canvas');
+                            tempCanvas.width = img.width;
+                            tempCanvas.height = img.height;
+                            const tempCtx = tempCanvas.getContext('2d');
+                            tempCtx.drawImage(img, 0, 0);
+
+                            // Detect face and extract descriptor
+                            const detection = await faceapi
+                                .detectSingleFace(tempCanvas, new faceapi.TinyFaceDetectorOptions())
+                                .withFaceLandmarks()
+                                .withFaceDescriptor();
+
+                            if (detection) {
+                                descriptors.push(Array.from(detection.descriptor));
+                                images.push(tempCanvas.toDataURL('image/jpeg', 0.9));
+                            }
+                        } catch (imgError) {
+                            console.warn('Error processing image for', person.name, imgError);
+                        }
+                    }
+
+                    if (descriptors.length === 0) {
+                        console.warn('No faces detected for:', person.name);
+                        errorCount++;
+                        continue;
+                    }
+
+                    // Save to IndexedDB with multiple descriptors
+                    const newPerson = {
+                        id: Date.now().toString() + Math.random(),
+                        name: person.name,
+                        dob: person.dob || null,
+                        descriptors: descriptors,
+                        picture: images[0], // Use first image as primary
+                        imageCount: descriptors.length,
+                        registered_at: new Date().toISOString()
+                    };
+
+                    await addPerson(newPerson);
+                    successCount++;
+                    console.log(`Loaded: ${person.name} with ${descriptors.length} image(s)`);
+                } catch (error) {
+                    console.error(`Error loading ${person.name}:`, error);
+                    errorCount++;
+                }
+            }
+
+            const message = `✅ Loaded ${successCount} people${errorCount > 0 ? ` (${errorCount} failed)` : ''}`;
+            showMessage('registerStatus', message, successCount > 0 ? 'success' : 'error');
+
             await loadPeopleList();
         } catch (error) {
-            showStatus('Error deleting person: ' + error.message, 'error');
+            console.error('Load data error:', error);
+            showMessage('registerStatus', 'Error loading JSON: ' + error.message, 'error');
         }
-    }
-}
-
-function generateId() {
-    return 'person_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-}
-
-function showStatus(message, type) {
-    statusEl.textContent = message;
-    statusEl.className = 'status-message ' + type;
+    };
     
-    if (type !== 'error') {
-        setTimeout(() => {
-            statusEl.className = 'status-message';
-        }, 5000);
+    input.click();
+}
+
+function downloadSampleData() {
+    const sampleData = {
+        "people": [
+            {
+                "name": "John Doe",
+                "dob": "1990-05-15",
+                "pictures": [
+                    "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop"
+                ]
+            },
+            {
+                "name": "Jane Smith",
+                "dob": "1992-08-22",
+                "pictures": [
+                    "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=400&fit=crop"
+                ]
+            },
+            {
+                "name": "Bob Johnson",
+                "dob": "1985-03-10",
+                "pictures": [
+                    "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&h=400&fit=crop"
+                ]
+            }
+        ]
+    };
+
+    const dataStr = JSON.stringify(sampleData, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'data-template.json';
+    link.click();
+    URL.revokeObjectURL(url);
+
+    showMessage('registerStatus', '📋 Template downloaded! Add URLs or base64 images to "pictures" array.', 'info');
+}
+
+async function exportRegisteredFaces() {
+    try {
+        showMessage('registerStatus', '⏳ Exporting registered faces...', 'info');
+        
+        const people = await getAllPeople();
+        
+        if (people.length === 0) {
+            showMessage('registerStatus', 'No registered faces to export', 'error');
+            return;
+        }
+
+        // Convert registered people to export format
+        const exportData = {
+            people: people.map(person => {
+                // Collect all images (reconstruct from descriptors if needed)
+                const pictures = [];
+                
+                // Add primary picture if it exists
+                if (person.picture) {
+                    pictures.push(person.picture);
+                }
+                
+                // If we have multiple descriptors but only one picture stored,
+                // we'll just export what we have
+                // In future, we could store all images separately
+                
+                return {
+                    name: person.name,
+                    dob: person.dob || null,
+                    pictures: pictures
+                };
+            })
+        };
+
+        const dataStr = JSON.stringify(exportData, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `faces-export-${new Date().toISOString().split('T')[0]}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+
+        showMessage('registerStatus', `✅ Exported ${people.length} registered face(s) with base64 images`, 'success');
+    } catch (error) {
+        console.error('Export error:', error);
+        showMessage('registerStatus', 'Error exporting faces: ' + error.message, 'error');
     }
 }
 
-initAdmin();
+function showMessage(elementId, message, type) {
+    const element = document.getElementById(elementId);
+    element.textContent = message;
+    element.className = `status-message ${type}`;
+    
+    setTimeout(() => {
+        element.className = 'status-message';
+    }, 5000);
+}
+
+function calculateAge(dobString) {
+    if (!dobString) return null;
+    const dob = new Date(dobString);
+    const today = new Date();
+    let age = today.getFullYear() - dob.getFullYear();
+    const monthDiff = today.getMonth() - dob.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+        age--;
+    }
+    return age > 0 ? age : null;
+}
+
+// Initialize on load
+document.addEventListener('DOMContentLoaded', initAdmin);

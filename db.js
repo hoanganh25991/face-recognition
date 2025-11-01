@@ -1,6 +1,7 @@
 const DB_NAME = 'FaceRecognitionDB';
 const PEOPLE_STORE = 'people';
-const version = 1;
+const SETTINGS_STORE = 'settings';
+const version = 2;
 
 let db;
 
@@ -21,20 +22,22 @@ async function initDB() {
                 const store = database.createObjectStore(PEOPLE_STORE, { keyPath: 'id' });
                 store.createIndex('name', 'name', { unique: false });
             }
+            
+            if (!database.objectStoreNames.contains(SETTINGS_STORE)) {
+                database.createObjectStore(SETTINGS_STORE, { keyPath: 'key' });
+            }
         };
     });
 }
 
-async function addPerson(id, name, birthday, faceDescriptor) {
+async function addPerson(personData) {
     const transaction = db.transaction([PEOPLE_STORE], 'readwrite');
     const store = transaction.objectStore(PEOPLE_STORE);
     
+    // Ensure descriptor is stored as array
     const person = {
-        id,
-        name,
-        birthday,
-        faceDescriptor: Array.from(faceDescriptor),
-        createdAt: new Date().toISOString()
+        ...personData,
+        descriptor: personData.descriptor ? Array.from(personData.descriptor) : null
     };
 
     return new Promise((resolve, reject) => {
@@ -90,6 +93,28 @@ async function updatePerson(id, name, birthday) {
     return new Promise((resolve, reject) => {
         const request = store.put(person);
         request.onsuccess = () => resolve(person);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function setSetting(key, value) {
+    const transaction = db.transaction([SETTINGS_STORE], 'readwrite');
+    const store = transaction.objectStore(SETTINGS_STORE);
+    
+    return new Promise((resolve, reject) => {
+        const request = store.put({ key, value });
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function getSetting(key) {
+    const transaction = db.transaction([SETTINGS_STORE], 'readonly');
+    const store = transaction.objectStore(SETTINGS_STORE);
+
+    return new Promise((resolve, reject) => {
+        const request = store.get(key);
+        request.onsuccess = () => resolve(request.result?.value);
         request.onerror = () => reject(request.error);
     });
 }
