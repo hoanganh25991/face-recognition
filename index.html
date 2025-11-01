@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Recognition - Family</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            overflow: hidden;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: #222;
+            border-bottom: 1px solid #444;
+        }
+
+        .header h1 {
+            font-size: 24px;
+        }
+
+        .header a {
+            background: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .header a:hover {
+            background: #45a049;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+            padding: 20px;
+            height: calc(100vh - 80px);
+        }
+
+        .video-container {
+            flex: 1;
+            position: relative;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scaleX(-1);
+        }
+
+        .info-panel {
+            width: 300px;
+            background: #222;
+            border-radius: 10px;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .info-panel h2 {
+            margin-bottom: 20px;
+            color: #4CAF50;
+        }
+
+        .recognized-person {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #4CAF50;
+        }
+
+        .recognized-person p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+
+        .recognized-person .name {
+            font-weight: bold;
+            font-size: 16px;
+            color: #4CAF50;
+        }
+
+        .recognized-person .confidence {
+            color: #888;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+
+        .status {
+            text-align: center;
+            padding: 15px;
+            background: #333;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .status.loading {
+            color: #FFA500;
+        }
+
+        .status.ready {
+            color: #4CAF50;
+        }
+
+        .face-info-overlay {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: #4CAF50;
+            padding: 8px 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            white-space: nowrap;
+            border-bottom: 3px solid #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>👤 Face Recognition System</h1>
+        <a href="admin.html">⚙️ Admin Panel</a>
+    </div>
+
+    <div class="container">
+        <div class="video-container">
+            <video id="video" autoplay muted playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <div class="info-panel">
+            <div class="status loading" id="status">
+                ⏳ Loading models...
+            </div>
+            <h2>Recognized Faces</h2>
+            <div id="recognizedList"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.8/dist/face-api.min.js"></script>
+    <script src="db.js"></script>
+    <script src="face-recognition.js"></script>
+</body>
+</html>

@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Face Recognition</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: #222;
+            border-bottom: 1px solid #444;
+        }
+
+        .header h1 {
+            font-size: 24px;
+        }
+
+        .header a {
+            background: #2196F3;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .header a:hover {
+            background: #0b7dda;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 30px auto;
+            padding: 20px;
+        }
+
+        .section {
+            background: #222;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        .section h2 {
+            color: #4CAF50;
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        input[type="text"],
+        input[type="date"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #444;
+            background: #333;
+            color: #fff;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        input[type="text"]:focus,
+        input[type="date"]:focus {
+            outline: none;
+            border-color: #4CAF50;
+            box-shadow: 0 0 5px rgba(76, 175, 80, 0.3);
+        }
+
+        .webcam-container {
+            position: relative;
+            width: 100%;
+            max-width: 400px;
+            margin-bottom: 20px;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        #registerVideo {
+            width: 100%;
+            display: block;
+            transform: scaleX(-1);
+        }
+
+        #registerCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+        }
+
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            margin-right: 10px;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        button.danger {
+            background: #f44336;
+        }
+
+        button.danger:hover {
+            background: #da190b;
+        }
+
+        .status-message {
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .status-message.success {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4CAF50;
+            border: 1px solid #4CAF50;
+            display: block;
+        }
+
+        .status-message.error {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+            border: 1px solid #f44336;
+            display: block;
+        }
+
+        .status-message.info {
+            background: rgba(33, 150, 243, 0.2);
+            color: #2196F3;
+            border: 1px solid #2196F3;
+            display: block;
+        }
+
+        .people-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .person-card {
+            background: #333;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #4CAF50;
+        }
+
+        .person-card h3 {
+            color: #4CAF50;
+            margin-bottom: 10px;
+        }
+
+        .person-card p {
+            margin: 5px 0;
+            color: #bbb;
+            font-size: 14px;
+        }
+
+        .person-card .id {
+            color: #888;
+            font-size: 12px;
+            font-family: monospace;
+            margin-top: 10px;
+        }
+
+        .person-card button {
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        .button-group button {
+            flex: 1;
+            margin: 0;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .people-list {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>⚙️ Admin Panel</h1>
+        <a href="index.html">👤 Back to Recognition</a>
+    </div>
+
+    <div class="container">
+        <div class="section">
+            <h2>Register New Person</h2>
+            
+            <div id="registerStatus" class="status-message"></div>
+
+            <div class="form-row">
+                <div>
+                    <div class="form-group">
+                        <label for="personName">Name:</label>
+                        <input type="text" id="personName" placeholder="Enter full name">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="personBirthday">Birthday:</label>
+                        <input type="date" id="personBirthday">
+                    </div>
+
+                    <div>
+                        <button id="captureBtn" onclick="captureFace()">📸 Capture Face</button>
+                        <button id="registerBtn" onclick="registerPerson()" disabled>✅ Register Person</button>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="webcam-container">
+                        <video id="registerVideo" autoplay muted playsinline></video>
+                        <canvas id="registerCanvas"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Registered People</h2>
+            <div id="peopleList" class="people-list"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.8/dist/face-api.min.js"></script>
+    <script src="db.js"></script>
+    <script src="admin.js"></script>
+</body>
+</html>
