@@ -267,26 +267,44 @@ function drawAILines(landmarks, index) {
 
     const points = landmarks.positions;
     
-    // Draw connections between key facial landmarks
-    const keyPoints = [0, 8, 16, 36, 45, 30]; // forehead, chin, ears, eyes, nose
-
     ctx.strokeStyle = 'rgba(0, 212, 255, 0.5)';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.5;
 
-    for (let i = 0; i < keyPoints.length - 1; i++) {
-        const p1 = points[keyPoints[i]];
-        const p2 = points[keyPoints[i + 1]];
-        
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
+    const featureGroups = [
+        { range: [0, 16], name: 'Jaw line' },
+        { range: [17, 21], name: 'Left eyebrow' },
+        { range: [22, 26], name: 'Right eyebrow' },
+        { range: [27, 30], name: 'Nose bridge' },
+        { range: [31, 35], name: 'Nose' },
+        { range: [36, 41], name: 'Left eye' },
+        { range: [42, 47], name: 'Right eye' },
+        { range: [48, 59], name: 'Mouth outer' },
+        { range: [60, 67], name: 'Mouth inner' }
+    ];
 
-        // Draw circles at key points
-        ctx.fillStyle = 'rgba(0, 255, 136, 0.6)';
-        ctx.beginPath();
-        ctx.arc(p1.x, p1.y, 4, 0, Math.PI * 2);
-        ctx.fill();
+    featureGroups.forEach(group => {
+        const [start, end] = group.range;
+        for (let i = start; i < end; i++) {
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            
+            if (p1 && p2) {
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            }
+        }
+    });
+
+    ctx.fillStyle = 'rgba(0, 255, 136, 0.6)';
+    for (let i = 0; i < points.length; i++) {
+        const point = points[i];
+        if (point) {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
     }
 }
 
