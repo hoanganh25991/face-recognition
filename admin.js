@@ -592,6 +592,18 @@ async function loadPredefinedData() {
                 }
             }
 
+            // Load Google API key from settings if present
+            if (data.settings && data.settings.googleApiKey) {
+                try {
+                    await setSetting('googleApiKey', data.settings.googleApiKey);
+                    googleApiKey = data.settings.googleApiKey;
+                    googleApiKeyInput.value = data.settings.googleApiKey;
+                    console.log('✅ Google API key loaded from import');
+                } catch (error) {
+                    console.error('Error loading Google API key:', error);
+                }
+            }
+
             const message = `✅ Loaded ${successCount} people${errorCount > 0 ? ` (${errorCount} failed)` : ''}`;
             showMessage('registerStatus', message, successCount > 0 ? 'success' : 'error');
 
@@ -629,7 +641,10 @@ function downloadSampleData() {
                     "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&h=400&fit=crop"
                 ]
             }
-        ]
+        ],
+        "settings": {
+            "googleApiKey": ""
+        }
     };
 
     const dataStr = JSON.stringify(sampleData, null, 2);
@@ -655,6 +670,9 @@ async function exportRegisteredFaces() {
             return;
         }
 
+        // Get Google API key from settings
+        const googleApiKey = await getSetting('googleApiKey');
+        
         // Convert registered people to export format
         const exportData = {
             people: people.map(person => {
@@ -675,7 +693,10 @@ async function exportRegisteredFaces() {
                     dob: person.dob || null,
                     pictures: pictures
                 };
-            })
+            }),
+            settings: {
+                googleApiKey: googleApiKey || ""
+            }
         };
 
         const dataStr = JSON.stringify(exportData, null, 2);
